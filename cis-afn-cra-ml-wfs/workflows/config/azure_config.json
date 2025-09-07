@@ -1,0 +1,118 @@
+{
+    "raw_data":{
+        "hub":{
+            "container":"AFN_ML/ENV_PLACEHOLDER/cra/raw_data/hub",
+            "year_0":{
+                "blob_name": "year_0",
+                "file_extension": "parquet",
+                "file_source": "anaplan",
+                "action_id": "116000000032",
+                "workspace_id": "TEMP_HUB_WORKSPACE_ID",
+                "model_id": "TEMP_HUB_MODEL_ID",
+                "anaplan_retry_count": "3",
+                "anaplan_skip_char":"0",
+                "anaplan_delimiter": ",",
+                "anaplan_engine": "python",
+                "anaplan_cols":"hub_col_list"
+
+            },
+            "year_1": {
+                "blob_name": "year_1",
+                "file_extension": "parquet",
+                "file_source": "azure",
+                "action_id": "116000000033",
+                "workspace_id": "TEMP_HUB_WORKSPACE_ID",
+                "model_id": "TEMP_HUB_MODEL_ID",
+                "anaplan_retry_count": "3",
+                "anaplan_skip_char":"0",
+                "anaplan_delimiter": ",",
+                "anaplan_engine": "python",
+                "anaplan_cols":"hub_col_list"
+            },
+            "year_2": {
+                "blob_name": "year_2",
+                "file_extension": "parquet",
+                "file_source": "azure",
+                "action_id": "116000000034",
+                "workspace_id": "TEMP_HUB_WORKSPACE_ID",
+                "model_id": "TEMP_HUB_MODEL_ID",
+                "anaplan_retry_count": "3",
+                "anaplan_skip_char":"0",
+                "anaplan_delimiter": ",",
+                "anaplan_engine": "python",
+                "anaplan_cols":"hub_col_list"
+            },
+            "year_3": {
+                "file_source": "azure",
+                "blob_name":"year_3",
+                "file_extension": "parquet"
+            },
+            "year_4": {
+                "file_source": "azure",
+                "blob_name":"year_4",
+                "file_extension": "parquet"
+            }
+
+        },
+        "spoke":{
+            "container":"AFN_ML/ENV_PLACEHOLDER/cra/raw_data/spoke",
+            "year_0":{
+                "file_source": "azure",
+                "blob_name":"year_0",
+                "file_extension": "txt",
+                "delimiter":"\t",
+                "action_id":"116000000067",
+                "workspace_id": "TEMP_SPOKE_WORKSPACE_ID",
+                "model_id": "TEMP_SPOKE_MODEL_ID",
+                "anaplan_retry_count": "3",
+                "anaplan_skip_char":"15",
+                "anaplan_delimiter": ",",
+                "anaplan_engine": "pyarrow",
+                "anaplan_cols":"spoke_col_list"
+            },
+            "year_1": {
+                "file_source": "azure",
+                "blob_name":"year_1",
+                "file_extension": "txt",
+                "delimiter":"\t"
+            },
+            "year_2": {
+                "file_source": "azure",
+                "blob_name":"year_2",
+                "file_extension": "txt",
+                "delimiter":"\t"
+            },
+            "year_3": {
+                "file_source": "azure",
+                "blob_name":"year_3",
+                "file_extension": "txt",
+                "delimiter":"\t"
+            },
+            "year_4": {
+                "file_source": "azure",
+                "blob_name":"",
+                "file_extension": "txt",
+                "delimiter":"\t"
+            }
+
+    }
+    },
+    "mappings":{
+        "container":"AFN_ML/ENV_PLACEHOLDER/cra/mappings",
+        "zones":{
+            "blob_name":"Zones",
+            "file_extension": "csv"
+        },
+        "non-recurring":{
+            "blob_name":"NonRecLinesAsOf_100323",
+            "file_extension": "csv"
+        },
+        "client_mapping":{
+            "blob_name":"ml_renewal_pull_client_mapping",
+            "file_extension": "parquet"
+        }
+    },
+    "results":{
+        "container":"AFN_ML/ENV_PLACEHOLDER/cra/training_results"
+    }
+}

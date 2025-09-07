@@ -1,0 +1,56 @@
+appId: $PROJECT_NAME
+env:
+    VAULT_NAMESPACE: $VAULT_NAMESPACE
+    VAULT_ROLE_NAME: $VAULT_ROLE_NAME
+    VAULT_URL: $VAULT_URL
+    SECRETS_URL: $SECRETS_URL
+    VAULT_ADDR: $VAULT_URL
+    PROJ_NAME: $PROJECT_NAME/$APP_RELEASENAME-$APP_ENV:$IMAGE_TAG
+
+image:
+    repository: $PROJECT_NAME/$APP_RELEASENAME-$APP_ENV
+    tag: $IMAGE_TAG
+replicaCount: 1
+deploymentKind: Deployment
+arguments: []
+securityContext: {}
+resources:
+    requests:
+        cpu: 1
+        memory: 1Gi
+    limits:
+        cpu: 2
+        memory: 2Gi
+livenessProbe: null
+appTierLabel: application
+podLabels:
+    app-id: $PROJECT_NAME
+    app-name: CRA
+    allow-ingress: true
+networking:
+    ports:
+        - name: http
+          servicePort: 5555
+          containerPort: 5555
+          protocol: TCP
+    ingressEnabled: true
+    ingressServicePort: 5555
+    ingresses:
+        - name: flower
+          rules:
+              - hostname: $HOSTNAME
+                path: /flower/
+                allNodes: false
+                tlsCertificateSecret: $APP_RELEASENAME-tls-secret
+          annotations:
+              cert-manager.io/cluster-issuer: oss2-ci-0-acme-sectigo
+tolerations:
+      - effect: NoSchedule
+        key: app
+        operator: Equal
+        value: microservice
+secrets: {}
+envVarsFromSecrets: []
+servicesEndpoints: []
+skipServiceAccountCreation: true
+serviceAccountName: $KUBERNETES_SERVICE_ACCOUNT_NAME

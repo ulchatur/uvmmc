@@ -1,0 +1,68 @@
+appId: $PROJECT_NAME
+env:
+    VAULT_NAMESPACE: $VAULT_NAMESPACE
+    VAULT_ROLE_NAME: $VAULT_ROLE_NAME
+    VAULT_URL: $VAULT_URL
+    SECRETS_URL: $SECRETS_URL
+    VAULT_ADDR: $VAULT_URL
+    PROJ_NAME: $PROJECT_NAME/$APP_RELEASENAME-$APP_ENV:$IMAGE_TAG
+
+image:
+    repository: $PROJECT_NAME/$APP_RELEASENAME-$APP_ENV
+    tag: $IMAGE_TAG
+replicaCount: 6
+deploymentKind: Deployment
+arguments: []
+securityContext: {}
+resources:
+    requests:
+        cpu: 1
+        memory: 1Gi
+    limits:
+        cpu: 2
+        memory: 2Gi
+livenessProbe:
+    failureThreshold: 2
+    httpGet:
+        path: /healthcheck
+        port: 8000
+        scheme: HTTP
+    initialDelaySeconds: 120
+    periodSeconds: 60
+    successThreshold: 1
+    timeoutSeconds: 20
+appTierLabel: application
+podLabels:
+    app-id: $PROJECT_NAME
+    app-name: CRA
+    allow-ingress: true
+networking:
+    ports:
+        - name: http
+          servicePort: 8000
+          containerPort: 8000
+          protocol: TCP
+    ingressEnabled: true
+    ingressServicePort: 8000
+    ingresses:
+        - name: api
+          rules:
+              - hostname: $HOSTNAME
+                path: /api/
+                allNodes: false
+                tlsCertificateSecret: $APP_RELEASENAME-tls-secret
+          annotations:
+              cert-manager.io/cluster-issuer: oss2-ci-0-acme-sectigo
+              nginx.ingress.kubernetes.io/proxy-read-timeout: "10000"
+              nginx.ingress.kubernetes.io/proxy-send-timeout: "10000"
+              nginx.ingress.kubernetes.io/proxy-body-size: 100m
+tolerations:
+      - effect: NoSchedule
+        key: app
+        operator: Equal
+        value: microservice
+secrets: {}
+envVarsFromSecrets: []
+servicesEndpoints: []
+skipServiceAccountCreation: true
+serviceAccountName: $KUBERNETES_SERVICE_ACCOUNT_NAME

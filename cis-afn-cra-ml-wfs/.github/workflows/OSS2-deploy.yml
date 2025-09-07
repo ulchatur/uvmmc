@@ -1,0 +1,389 @@
+#
+# Each job in this Reusable workflow is able to be run optionally - however
+# due to this defect https://github.com/actions/runner/issues/491 each jobs
+# requires "if: ${{ !failure() && !cancelled() }}" to run if a job it needs
+# is skipped, this maintains  the job run order
+#
+name: OSS2-Deploy
+
+on:
+  workflow_call:
+    inputs:
+      applicationName:
+        description:
+          'The name of the application to deploy. If not specified all applications defined in
+          deploy-config.json will be deployed.'
+        required: false
+        type: string
+      version:
+        description:
+          'The version artifact  the libs should be published under. If not set the value
+          1.1.[workflow run number] will be used. When specified a full build of all libs is
+          triggered.'
+        required: false
+        type: string
+      env_name:
+        description: 'Allows environment to be overridden'
+        required: false
+        type: string
+      additionalEnvVars:
+        description: 'Allows for dynamic environment variables to be passed to the shared workflow.'
+        required: false
+        type: string
+      useEphemeral:
+        description: 'Set to true to use OSS 2.0 ephemeral runners group.'
+        required: false
+        type: boolean
+        default: true
+      force:
+        description:
+          'Provides the ability to control the force flag passed to the deployment. This can help
+          with re-deploying stuck deployments.'
+        required: false
+        type: string
+        default: 'false'
+    secrets:
+      OSS2_PAT_TOKEN:
+        required: true
+      OSS2API_APIKEY:
+        required: true
+      JFROG_SUBMISSION_REPO_USER:
+        required: true
+      JFROG_SUBMISSION_REPO_PASSWORD:
+        required: true
+      OSS2API_DEPLOYMENTKEY:
+        required: true
+      OSS2_SERVERLESS_KEY:
+        required: false
+env:
+  PROJECT_NAME: ${{ github.event.repository.name }} # Needed for OSS2 Deploy
+  IMAGE_TAG: ${{ inputs.version || format('1.1.{0}', github.run_number) }}
+  REGISTRY: submissions.mgti-dal-so-art.mrshmc.com
+  TLS_CERTIFICATE_SECRET: tls-certificate-secret
+  IMAGE_SUBMITTER: ${{ github.event.sender.login }}
+  OSS2_HELPER_VERSION: v1
+
+jobs:
+  determineRunnerGroup:
+    name: Determine Runners Group
+    runs-on: ubuntu-latest
+    outputs:
+      runner: ${{ steps.setup.outputs.runner }}
+    steps:
+      - name: Check ephemeral runner option
+        id: setup
+        run: |
+          if [ ${{ inputs.useEphemeral }} == 'true' ]; then
+            echo 'Running on ephemeral runner group'
+            echo "runner=mmc-ubuntu" >> $GITHUB_OUTPUT
+          else
+            echo 'Running on OSS2 runner group'
+            echo "runner=oss2" >> $GITHUB_OUTPUT
+          fi
+  # Generates data for the deploy steps by creating a json object from deploy-config.json
+  # Also outputs a number of environmental variables that are to be used within the reusable
+  # workflows as the workflows can not access the env context of this file
+  generate-deploy-data:
+    name: Generate deploy data
+    runs-on: ubuntu-latest
+    outputs:
+      apps: ${{ steps.set-matrix.outputs.apps }}
+      runApps: ${{steps.set-matrix.outputs.runApps}}
+      updaters: ${{steps.set-matrix.outputs.updaters}}
+      runUpdaters: ${{steps.set-matrix.outputs.runUpdaters}}
+      tests: ${{steps.set-matrix.outputs.tests}}
+      runTests: ${{steps.set-matrix.outputs.runTests}}
+      images: ${{steps.set-matrix.outputs.images}}
+    steps:
+      - uses: actions/checkout@v4
+      - id: set-matrix
+        run: |
+          content=`cat ./deploy-config.json`
+          if [ -n "${{ inputs.applicationName }}" ]; then
+            deployapp=`jq '.apps[] | select(.name=="${{ inputs.applicationName }}")' <<< "$content"`
+            apps=`echo { "apps": [ $deployapp ] }`
+            deployupdaters=`jq '.updaters[] | select(.name=="${{ inputs.applicationName }}")' <<< "$content"`
+            updaters=`echo { "updaters": [ $deployupdaters ] }`
+            deploytests=`jq '.tests[] | select(.name=="${{ inputs.applicationName }}")' <<< "$content"`
+            tests=`echo { "tests": [ $deploytests ] }`
+            deployconfig=`jq '.images[] | select(."image-name"=="${{ inputs.buildApplicationName }}")' <<< "$content"`
+            images=`echo { "images": [ $deployconfig ] }`
+          else
+            apps=`echo {"apps:"$(jq -r '.apps' <<< "$content" )`}
+            updaters=`echo {"updaters:"$(jq -r '.updaters' <<< "$content" )`}
+            tests=`echo {"tests:"$(jq -r '.tests' <<< "$content" )`}
+            images=`echo {"images:"$(jq -r '.images' <<< "$content" )`}
+          fi
+          # the following lines are only required for multi line json
+          apps="${apps//$'\n'/''}"
+          apps="${apps//$'\r'/''}"
+          apps="${apps//$' '/''}"
+          updaters="${updaters//$'\n'/''}"
+          updaters="${updaters//$'\r'/''}"
+          updaters="${updaters//$' '/''}"
+          tests="${tests//$'\n'/''}"
+          tests="${tests//$'\r'/''}"
+          tests="${tests//$' '/''}"
+          images="${images//$'\n'/''}"
+          images="${images//$'\r'/''}"
+          images="${images//$' '/''}"
+          runApps="false"
+          runUpdaters="false"
+          runTests="false"
+          if [ $apps != '{apps:[]}' ]; then
+              echo "Apps are configured";
+              echo "apps=$apps" >> $GITHUB_OUTPUT ;
+              runApps="true";
+              echo "runApps=$runApps" >> $GITHUB_OUTPUT ;
+          fi;
+          if [ $updaters != '{updaters:[]}' ]; then
+              echo "Updaters are configured";
+              echo "updaters=$updaters" >> $GITHUB_OUTPUT ;
+              runUpdaters="true";
+              echo "runUpdaters=$runUpdaters" >> $GITHUB_OUTPUT ;
+          fi;
+          if [ $tests != '{tests:[]}' ]; then
+              echo "Tests are configured";
+              echo "tests=$tests" >> $GITHUB_OUTPUT ;
+              runTests="true";
+              echo "runTests=$runTests" >> $GITHUB_OUTPUT ;
+          fi;
+          echo $apps
+          echo $updaters
+          echo $tests
+          echo $images
+          echo "Run apps: $runApps"
+          echo "Run updaters: $runUpdaters"
+          echo "Run tests: $runTests"
+          echo "Run images: $images"
+  deploy-apps:
+    name: Deploy apps
+    needs: [generate-deploy-data, determineRunnerGroup]
+    runs-on: ${{ needs.determineRunnerGroup.outputs.runner }}
+    if: ${{(!failure() && !cancelled()) && needs.generate-deploy-data.outputs.runApps == 'true'}}
+    strategy:
+      matrix: ${{fromJson(needs.generate-deploy-data.outputs.apps)}}
+    environment: ${{ inputs.env_name || github.event.inputs.env_name || 'dev' }}
+    env:
+      DEPLOYMENT_TIMEOUT_MINIMUM_MINS: 10
+      DEPLOYMENT_TIMEOUT_DEFAULT_MINS: 15
+      OSS2API_DEPLOYMENTKEY:
+        ${{ secrets[(matrix.apps.jobs.has-serverless == 'true' || matrix.apps.jobs.has-serverless ==
+        true ) && 'OSS2_SERVERLESS_KEY' || 'OSS2API_DEPLOYMENTKEY' ] }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Checkout the specific image tag when:
+          #  - Deploying from main following the build of a new image (i.e. when a build/deploy is triggered on merge into main)
+          #  - Deploying a specific image tag from main (i.e. when deploying to prod-preview/prod)
+          # For deployments from any other branch, checkout the branch being deployed at its latest commit as it won't have a tag.
+          ref: ${{ github.ref_name == 'main' && env.IMAGE_TAG || github.sha }}
+          clean: false
+      - name:
+          Import environment variables from config and any dynamic variables passed to the workflow
+        run: |
+          cat ./deployments/config/${{ inputs.env_name || github.event.inputs.env_name || 'dev' }}-${{matrix.apps.name}}.config >> $GITHUB_ENV
+          echo "${{ inputs.additionalEnvVars }}" >> $GITHUB_ENV
+          echo "serverless: ${{matrix.apps.jobs.has-serverless}}"
+
+      - name: Scan Serverless function
+        if:
+          ${{matrix.apps.jobs.has-serverless == 'true' || matrix.apps.jobs.has-serverless == true}}
+        uses: mmctech/oss2-workflows-mmc-mgti/scan-image@v3
+        with:
+          oss2api-key: ${{ secrets.OSS2API_APIKEY }}
+          image-repo: ${{ env.PROJECT_NAME }}/${{ matrix.apps.name }}
+          image-tag: ${{ env.IMAGE_TAG }}
+          region: ${{ env.REGION  || 'nasa' }}
+          lifecycle: ${{ env.LIFECYCLE || 'dev' }}
+          promote-to-ecr: true
+          image-submitter: ${{ env.IMAGE_SUBMITTER }}
+          repo-user: ${{ secrets.JFROG_SUBMISSION_REPO_USER }}
+          repo-pass: ${{ secrets.JFROG_SUBMISSION_REPO_PASSWORD }}
+          retry-interval: 60
+          promote-on-complete: true
+          send-notification: true
+
+      - name: Export ECR Registry
+        if:
+          ${{matrix.apps.jobs.has-serverless == 'true' || matrix.apps.jobs.has-serverless == true}}
+        run: |
+          url="${{ env.ECR_IMAGE_PATH }}"
+          echo "IMAGE_URI: $url"
+          echo "IMAGE_URI=$url" >> $GITHUB_ENV
+
+      - name: Deploy
+        uses: mmctech/oss2-workflows-mmc-mgti/deploy-app@v3
+        with:
+          oss2api-key: ${{ env.OSS2API_DEPLOYMENTKEY }}
+          chart-name: ${{ env.CHART_NAME }}
+          chart-version: ${{ env.CHART_VERSION }}
+          force: ${{ inputs.force == 'true' }}
+          namespace: ${{ env.APP_NAMESPACE }}
+          release-name: ${{ env.APP_RELEASENAME }}-${{ inputs.env_name }}
+          values-file: ${{ env.DEPLOYMENT_VALUES_FILE }}
+          deployment-timeout:
+            ${{ (matrix.apps.jobs.monitor-rollout == 'true' || matrix.apps.jobs.monitor-rollout ==
+            true) && (matrix.apps.jobs.monitor-rollout-timeout-mins ||
+            env.DEPLOYMENT_TIMEOUT_DEFAULT_MINS) || env.DEPLOYMENT_TIMEOUT_MINIMUM_MINS }}
+      - name: Checkout core-cicd repo
+        uses: actions/checkout@v4
+        with:
+          clean: false
+          fetch-depth: 1
+          repository: mmctech/core-cicd
+          path: _cicd/
+          token: ${{ secrets.OSS2_PAT_TOKEN }}
+      - name: Debug - List cicd content
+        run: |
+          ls -aln _cicd/.github/workflows/scripts
+      - name: Debug - List repo content
+        run: |
+          ls -aln
+  deploy-updaters:
+    name: Deploy updaters
+    needs: [deploy-apps, generate-deploy-data, determineRunnerGroup]
+    runs-on: ${{ needs.determineRunnerGroup.outputs.runner }}
+    if:
+      ${{(!failure() && !cancelled()) && needs.generate-deploy-data.outputs.runUpdaters == 'true'}}
+    strategy:
+      matrix: ${{fromJson(needs.generate-deploy-data.outputs.updaters)}}
+    environment: ${{ inputs.env_name || github.event.inputs.env_name || 'dev' }}
+    steps:
+      - name: Debug - List repo content
+        run: |
+          ls -aln
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Checkout the specific image tag when:
+          #  - Deploying from main following the build of a new image (i.e. when a build/deploy is triggered on merge into main)
+          #  - Deploying a specific image tag from main (i.e. when deploying to prod-preview/prod)
+          # For deployments from any other branch, checkout the branch being deployed at its latest commit as it won't have a tag.
+          ref: ${{ github.ref_name == 'main' && env.IMAGE_TAG || github.sha }}
+          clean: false
+      - name:
+          Import environment variables from config and any dynamic variables passed to the workflow
+        run: |
+          cat ./deployments/config/${{ inputs.env_name || github.event.inputs.env_name || 'dev' }}-${{matrix.updaters.name}}.config >> $GITHUB_ENV
+          echo "${{ inputs.additionalEnvVars }}" >> $GITHUB_ENV
+      # Delete the deployed job if it exists within OSS 2.0 as otherwise the deployment will fail.
+      # This step is only necessary when there is an issue with the 'Monitor job' step which causes
+      # the final 'Delete job' to not run.
+      - name: Checkout core-cicd repo
+        uses: actions/checkout@v4
+        with:
+          clean: false
+          fetch-depth: 1
+          repository: mmctech/core-cicd
+          path: _cicd/
+          token: ${{ secrets.OSS2_PAT_TOKEN }} # `githubRepoToken` is a secret that contains a PAT
+      - name: Debug - List cicd content
+        run: |
+          ls -aln _cicd/.github/workflows/scripts
+      - name: Preemptively delete job
+        run: sh ./_cicd/.github/workflows/scripts/delete-job.sh
+        if: ${{matrix.updaters.jobs.preemptive-delete}}
+        env:
+          OSS2API_DEPLOYMENTKEY: ${{ secrets.OSS2API_DEPLOYMENTKEY }}
+          APP_RELEASENAME: ${{ env.APP_RELEASENAME }}
+          APP_NAMESPACE: ${{ env.APP_NAMESPACE }}
+      - name: Deploy Updater job
+        uses: mmctech/oss2-workflows-mmc-mgti/deploy-app@v3
+        with:
+          oss2api-key: ${{ secrets.OSS2API_DEPLOYMENTKEY }}
+          chart-name: ${{ env.CHART_NAME }}
+          chart-version: ${{ env.CHART_VERSION }}
+          force: ${{ inputs.force == 'true' }}
+          namespace: ${{ env.APP_NAMESPACE }}
+          release-name: ${{ env.APP_RELEASENAME }}-${{ inputs.env_name }}
+          values-file: ${{ env.DEPLOYMENT_VALUES_FILE }}
+      - name: Monitor job
+        run: bash ./_cicd/.github/workflows/scripts/monitor-job.sh
+        if: ${{matrix.updaters.jobs.monitor-job}}
+        env:
+          JOB_NAME: ${{ env.APP_RELEASENAME }}-app
+          OSS2API_DEPLOYMENTKEY: ${{ secrets.OSS2API_DEPLOYMENTKEY }}
+          APP_NAMESPACE: ${{ env.APP_NAMESPACE }}
+      - name: Delete job
+        run: sh ./_cicd/.github/workflows/scripts/delete-job.sh
+        if: ${{matrix.updaters.jobs.delete-job}}
+        env:
+          OSS2API_DEPLOYMENTKEY: ${{ secrets.OSS2API_DEPLOYMENTKEY }}
+          APP_RELEASENAME: ${{ env.APP_RELEASENAME }}
+          APP_NAMESPACE: ${{ env.APP_NAMESPACE }}
+  post-deploy-tests:
+    name: post deploy tests
+    needs: [deploy-updaters, generate-deploy-data, determineRunnerGroup]
+    runs-on: ${{ needs.determineRunnerGroup.outputs.runner }}
+    # This overrides the default "success" condition so that this job runs even if scan was skipped.
+    if: ${{(!failure() && !cancelled()) && needs.generate-deploy-data.outputs.runTests == 'true'}}
+    environment: ${{ inputs.env_name || github.event.inputs.env_name || 'dev' }}
+    strategy:
+      matrix: ${{fromJson(needs.generate-deploy-data.outputs.tests)}}
+    steps:
+      - name: Debug - List repo content
+        run: |
+          ls -aln
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Checkout the specific image tag when:
+          #  - Deploying from main following the build of a new image (i.e. when a build/deploy is triggered on merge into main)
+          #  - Deploying a specific image tag from main (i.e. when deploying to prod-preview/prod)
+          # For deployments from any other branch, checkout the branch being deployed at its latest commit as it won't have a tag.
+          ref: ${{ github.ref_name == 'main' && env.IMAGE_TAG || github.sha }}
+          clean: false
+      - name:
+          Import environment variables from config and any dynamic variables passed to the workflow
+        run: |
+          cat ./deployments/config/${{ inputs.env_name || github.event.inputs.env_name || 'dev' }}-${{matrix.tests.name}}.config >> $GITHUB_ENV
+          echo "${{ inputs.additionalEnvVars }}" >> $GITHUB_ENV
+      - name: Checkout core-cicd repo
+        uses: actions/checkout@v4
+        with:
+          clean: false
+          fetch-depth: 1
+          repository: mmctech/core-cicd
+          path: _cicd/
+          token: ${{ secrets.OSS2_PAT_TOKEN }} # `githubRepoToken` is a secret that contains a PAT
+      - name: Debug - List cicd content
+        run: |
+          ls -aln _cicd/
+      # Delete the deployed job if it exists within OSS 2.0 as otherwise the deployment will fail.
+      # This step is only necessary when there is an issue with the 'Monitor job' step which causes
+      # the final 'Delete job' to not run.
+      - name: Preemptively delete job
+        run: sh ./_cicd/.github/workflows/scripts/delete-job.sh
+        if: ${{matrix.tests.jobs.preemptive-delete}}
+        env:
+          OSS2API_DEPLOYMENTKEY: ${{ secrets.OSS2API_DEPLOYMENTKEY }}
+          APP_RELEASENAME: ${{ env.APP_RELEASENAME }}
+          APP_NAMESPACE: ${{ env.APP_NAMESPACE }}
+      - name: Deploy Updater job
+        uses: mmctech/oss2-workflows-mmc-mgti/deploy-app@v3
+        with:
+          oss2api-key: ${{ secrets.OSS2API_DEPLOYMENTKEY }}
+          chart-name: ${{ env.CHART_NAME }}
+          chart-version: ${{ env.CHART_VERSION }}
+          force: ${{ inputs.force == 'true' }}
+          namespace: ${{ env.APP_NAMESPACE }}
+          release-name: ${{ env.APP_RELEASENAME }}-${{ inputs.env_name }}
+          values-file: ${{ env.DEPLOYMENT_VALUES_FILE }}
+      - name: Monitor job
+        run: bash ./_cicd/.github/workflows/scripts/monitor-job.sh
+        if: ${{matrix.tests.jobs.monitor-job}}
+        env:
+          JOB_NAME: ${{ env.APP_RELEASENAME }}-app
+          OSS2API_DEPLOYMENTKEY: ${{ secrets.OSS2API_DEPLOYMENTKEY }}
+          APP_NAMESPACE: ${{ env.APP_NAMESPACE }}
+      - name: Delete job
+        run: sh ./_cicd/.github/workflows/scripts/delete-job.sh
+        if: ${{matrix.tests.jobs.delete-job}}
+        env:
+          OSS2API_DEPLOYMENTKEY: ${{ secrets.OSS2API_DEPLOYMENTKEY }}
+          APP_RELEASENAME: ${{ env.APP_RELEASENAME }}
+          APP_NAMESPACE: ${{ env.APP_NAMESPACE }}
+      - name: Tidy up cicd folder
+        run: rm -rf ./_cicd

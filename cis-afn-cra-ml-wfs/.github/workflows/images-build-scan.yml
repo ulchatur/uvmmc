@@ -1,0 +1,220 @@
+# This reusable workflow file uses github strategy matrices along with a number of other inputs to
+# build docker images
+# NOTE: `image-data` must be correctly formed json e.g
+# {
+#   "images": [
+#        {
+#            "image-name": "ui",
+#            "dockerfile": "./deployments/docker/Dockerfile.ui"
+#        },
+#        {
+#            "image-name": "api",
+#            "dockerfile": "./deployments/docker/Dockerfile.api"
+#        }
+#    ]
+#}
+
+name: Build and Scan Images
+
+on:
+  workflow_call:
+    inputs:
+      buildArtifactName:
+        description: 'The name of a build artifact to download and make available to this workflow.'
+        required: false
+        type: string
+      buildArtifactPath:
+        description:
+          'The path to extract the downloaded build artifact to. Should only be set if
+          buildArtifactName is set'
+        required: false
+        type: string
+      buildApplicationName:
+        description:
+          'The name of the application to build. If not specified all applications defined in
+          deploy-config.json will be built.'
+        required: false
+        type: string
+      dockerBuildOptions:
+        description:
+          'Additional options to pass to the docker image build command. E.g. Pass --pull to force a
+          new pull of the base image.'
+        required: false
+        type: string
+      version:
+        description:
+          'The artifact number the libs should be published under. If not set the value
+          1.1.[workflow run number] will be used. When specified a full build of all libs is
+          triggered.'
+        required: false
+        type: string
+      image_env:
+        description:
+          'Define image environment tag like dev, uat or prod'
+        required: true
+        type: string
+      useEphemeral:
+        description: set to true to use OSS 2.0 ephemeral runners group
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      OSS2_PAT_TOKEN:
+        required: true
+      OSS2API_APIKEY:
+        required: true
+      JFROG_SUBMISSION_REPO_USER:
+        required: true
+      JFROG_SUBMISSION_REPO_PASSWORD:
+        required: true
+env:
+  PROJECT_NAME: ${{ github.event.repository.name }}
+  IMAGE_ENV: ${{inputs.image_env}}
+  IMAGE_TAG: ${{ inputs.version || format('1.1.{0}', github.run_number) }}
+  REGISTRY: submissions.mgti-dal-so-art.mrshmc.com
+  IMAGE_SUBMITTER: ${{ github.event.sender.login }}
+  OSS2_HELPER_VERSION: v1
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  determineRunnerGroup:
+    name: Determine Runners Group
+    runs-on: ubuntu-latest
+    outputs:
+      runner: ${{ steps.setup.outputs.runner }}
+    steps:
+      - name: Check ephemeral runner option
+        id: setup
+        run: |
+          if [ ${{ inputs.useEphemeral }} == 'true' ]; then
+            echo 'Running on ephemeral runner group'
+            echo "runner=mmc-ubuntu" >> $GITHUB_OUTPUT
+          else
+            echo 'Running on OSS2 runner group'
+            echo "runner=oss2" >> $GITHUB_OUTPUT
+          fi
+  # Generates data for the scan build steps by creating a json object from deploy-config.json
+  # Also outputs a number of environmental variables that are to be used within the reusable
+  # workflows as the workflows can not access the env context of this file
+  generate-build-scan-data:
+    name: Generate build and scan data
+    runs-on: ubuntu-latest
+    outputs:
+      data: ${{ steps.set-matrix.outputs.data }}
+      svee: ${{ steps.set-matrix.outputs.data }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: set-matrix
+        run: |
+          content=`cat ./deploy-config.json`
+          if [ -n "${{ inputs.buildApplicationName }}" ]; then
+            deployconfig=`jq '.images[] | select(."image-name"=="${{ inputs.buildApplicationName }}")' <<< "$content"`
+            images=`echo { "images": [ $deployconfig ] }`
+          else
+            images=`echo {"images:"$(jq -r '.images' <<< "$content" )`}
+          fi
+          # the following lines are only required for multi line json
+          images="${images//$'\n'/''}"
+          images="${images//$'\r'/''}"
+          images="${images//$' '/''}"
+          # end of optional handling for multi line json
+          echo $images
+          echo "data=$images" >> $GITHUB_OUTPUT
+
+  doBuild:
+    name: Build Images
+    needs: [generate-build-scan-data, determineRunnerGroup]
+    runs-on: ${{ needs.determineRunnerGroup.outputs.runner }}
+    strategy:
+      matrix: ${{fromJson(needs.generate-build-scan-data.outputs.data)}}
+    steps:
+      - name: Print build info
+        env:
+          MATRIX_JSON: ${{ toJSON(matrix) }}
+        run: |
+          echo "${MATRIX_JSON}"
+          echo ${{matrix.images.image-name}}
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Download artifacts
+        if: inputs.buildArtifactName != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.buildArtifactName }}
+          path: ${{ inputs.buildArtifactPath }}
+        continue-on-error: true
+      - name: Extract artifacts
+        if: inputs.buildArtifactName != ''
+        run: |
+          echo "Pre Unzip - contents of build artifact directory:" && ls -al ${{ inputs.buildArtifactPath }}
+          if [[ -n "${{ inputs.buildArtifactPath }}" ]] ; then cd ${{ inputs.buildArtifactPath }} ; fi
+          tar -xzf *.tar.gz || true
+          echo "Post Unzip - contents of build artifact directory:" && ls -al .
+        continue-on-error: true
+      - name: Build docker image
+        run: |
+          BUILDKIT_INLINE_CACHE=1 DOCKER_BUILDKIT=1 \
+          docker image build \
+          ${{ inputs.dockerBuildOptions }} \
+          -f ${{ matrix.images.dockerfile }} \
+          --build-arg BUILD_DATE_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+          --build-arg BUILD_GIT_COMMIT=${{ github.sha }} \
+          --build-arg BUILD_VERSION=${{ env.IMAGE_TAG }} \
+          --build-arg DIST_FOLDER_LOCATION=${{  matrix.images.distLocation }} \
+          -t ${{ env.REGISTRY }}/${{ env.PROJECT_NAME }}/${{ matrix.images.image-name }}-${{ env.IMAGE_ENV }}:${{ env.IMAGE_TAG }} \
+          .
+      - name: Login to Jfrog registry
+        run: |
+          echo ${{ secrets.JFROG_SUBMISSION_REPO_PASSWORD }} | docker login ${{ env.REGISTRY }} -u ${{ secrets.JFROG_SUBMISSION_REPO_USER }} --password-stdin
+      - name: Push image
+        run: |
+          docker push \
+          ${{ env.REGISTRY }}/${{ env.PROJECT_NAME }}/${{ matrix.images.image-name }}-${{ env.IMAGE_ENV }}:${{ env.IMAGE_TAG }}
+  doScan:
+    name: Scan Images
+    needs: [doBuild, generate-build-scan-data, determineRunnerGroup]
+    runs-on: ${{ needs.determineRunnerGroup.outputs.runner }}
+    strategy:
+      fail-fast: true
+      matrix: ${{fromJson(needs.generate-build-scan-data.outputs.data)}}
+    steps:
+      - name: Print scan info
+        env:
+          MATRIX_JSON: ${{ toJSON(matrix.data) }}
+        run: |
+          echo "${MATRIX_JSON}"
+          echo ${{matrix.images.image-name}}
+      - name: Checkout OSS2 GitHub Action Repo
+        uses: actions/checkout@v4
+        with:
+          repository: mmctech/oss2-workflows-mmc-mgti
+          ref: ${{ env.OSS2_HELPER_VERSION }}
+          token: ${{ secrets.OSS2_PAT_TOKEN }}
+          path: .github/actions/oss2
+      - name: Scan Image
+        uses: mmctech/oss2-workflows-mmc-mgti/scan-image@v3
+        with:
+          oss2api-key: ${{ secrets.OSS2API_APIKEY }}
+          image-repo: ${{ env.PROJECT_NAME }}/${{ matrix.images.image-name }}-${{ env.IMAGE_ENV }}
+          image-tag: ${{ env.IMAGE_TAG }}
+          region: ${{ env.REGION  || 'nasa' }}
+          lifecycle: ${{ env.LIFECYCLE || 'dev' }}
+          promote-to-ecr: false
+          image-submitter: ${{ env.IMAGE_SUBMITTER }}
+          repo-user: ${{ secrets.JFROG_SUBMISSION_REPO_USER }}
+          repo-pass: ${{ secrets.JFROG_SUBMISSION_REPO_PASSWORD }}
+          retry-interval: 60
+          promote-on-complete:
+            ${{matrix.images.promote-to-ecr == 'false' || matrix.images.promote-to-ecr == false }}
+          send-notification: true
+      - name: Attach Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        # Allow this job to fail. This is to avoid issues related to github storage
+        # getting full. The results of the job are still available in sysdig
+        continue-on-error: true
+        with:
+          name: scan-${{matrix.images.image-name}}-report
+          path: ${{ env.SCAN_REPORT_PATH }}

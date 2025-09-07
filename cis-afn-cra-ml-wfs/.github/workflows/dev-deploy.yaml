@@ -1,0 +1,45 @@
+name: Build, Scan and Deploy - DEV
+
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+    inputs:
+      env_name:
+        description: Environment
+        required: true
+        default: dev
+      version:
+        description:
+jobs:
+  image-build-and-scan:
+    name: Build and scan
+    if: ${{(!github.event.inputs.version) && (github.event.head_commit.message != 'Initial commit')}}
+    uses: mmctech/cis-afn-cra-ml-wfs/.github/workflows/images-build-scan.yml@dev
+    with:
+      version: ${{ format('1.1.{0}', github.run_number) }}
+      useEphemeral: true
+      image_env: "dev"
+    secrets:
+      OSS2_PAT_TOKEN: ${{ secrets.OSS2_PAT_TOKEN }}
+      OSS2API_APIKEY: ${{ secrets.OSS2API_APIKEY_DEV }}
+      JFROG_SUBMISSION_REPO_USER: ${{ secrets.JFROG_SUBMISSION_REPO_USER }}
+      JFROG_SUBMISSION_REPO_PASSWORD: ${{ secrets.JFROG_SUBMISSION_REPO_PASSWORD }}
+  OSS2-Deploy:
+    name: OSS2 Deploy
+    needs: image-build-and-scan
+    if: ${{!cancelled() && !failure() && (github.event.head_commit.message != 'Initial commit')}}
+    uses: mmctech/cis-afn-cra-ml-wfs/.github/workflows/OSS2-deploy.yml@dev
+    with:
+      version: ${{ github.event.inputs.version || format('1.1.{0}', github.run_number) }}
+      env_name: "dev"
+      force: "true"
+      useEphemeral: true
+    secrets:
+      OSS2_PAT_TOKEN: ${{ secrets.OSS2_PAT_TOKEN }}
+      OSS2API_APIKEY: ${{ secrets.OSS2API_APIKEY_DEV }}
+      OSS2API_DEPLOYMENTKEY: ${{secrets.OSS2API_DEPLOYMENTKEY_DEV}}
+      JFROG_SUBMISSION_REPO_USER: ${{ secrets.JFROG_SUBMISSION_REPO_USER }}
+      JFROG_SUBMISSION_REPO_PASSWORD: ${{ secrets.JFROG_SUBMISSION_REPO_PASSWORD }}
+      # KUBERNETES_TOKEN: ${{ secrets.KUBERNETES_TOKEN }}

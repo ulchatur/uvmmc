@@ -1,0 +1,36 @@
+{
+  "images": [
+    {
+      "image-name": "api",
+      "dockerfile": "./deployments/docker/api.Dockerfile"
+    },
+    {
+      "image-name": "celery",
+      "dockerfile": "./deployments/docker/celery.Dockerfile"
+    },
+    {
+      "image-name": "etl",
+      "dockerfile": "./deployments/docker/etl.Dockerfile"
+    },
+    {
+      "image-name": "redis",
+      "dockerfile": "./deployments/docker/redis.Dockerfile"
+    }
+  ],
+  "apps": [
+    {
+      "name": "api"
+    },
+    {
+      "name": "celery"
+    },
+    {
+      "name": "etl"
+    },
+    {
+      "name": "redis"
+    }
+  ],
+  "updaters": [],
+  "tests": []
+}

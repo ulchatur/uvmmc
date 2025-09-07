@@ -1,0 +1,43 @@
+appId: $PROJECT_NAME
+env:
+    VAULT_NAMESPACE: $VAULT_NAMESPACE
+    VAULT_ROLE_NAME: $VAULT_ROLE_NAME
+    VAULT_URL: $VAULT_URL
+    SECRETS_URL: $SECRETS_URL
+    VAULT_ADDR: $VAULT_URL
+    PROJ_NAME: $PROJECT_NAME/$APP_RELEASENAME-$APP_ENV:$IMAGE_TAG
+
+image:
+    repository: $PROJECT_NAME/$APP_RELEASENAME-$APP_ENV
+    tag: $IMAGE_TAG
+replicaCount: 6
+deploymentKind: Deployment
+arguments: []
+securityContext: {}
+resources:
+    requests:
+        cpu: 4
+        memory: 4Gi
+    limits:
+        cpu: 8
+        memory: 8Gi
+livenessProbe: null
+hpa:
+    enabled: true
+    minReplicas: 6
+    maxReplicas: 24
+    general:
+        averageUtilization:
+            cpu: 90
+            memory: 90
+    complex:
+        metrics: []
+appTierLabel: web
+podLabels:
+    app-id: $PROJECT_NAME
+    app-name: CRA
+secrets: {}
+envVarsFromSecrets: []
+servicesEndpoints: []
+skipServiceAccountCreation: false
+serviceAccountName: $KUBERNETES_SERVICE_ACCOUNT_NAME

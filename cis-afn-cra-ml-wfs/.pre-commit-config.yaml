@@ -1,0 +1,55 @@
+repos:
+-   hooks:
+    -   args:
+        - --line-length=120
+        id: black
+        language_version: python3.10
+    repo: https://github.com/psf/black
+    rev: 24.2.0
+-   hooks:
+    -   args:
+        - --profile
+        - black
+        id: isort
+    repo: https://github.com/pycqa/isort
+    rev: 5.13.2
+-   hooks:
+    -   id: commitizen
+    -   id: commitizen-branch
+        stages: [push]
+    repo: https://github.com/commitizen-tools/commitizen
+    rev: v3.13.0
+-   hooks:
+    -   id: check-docstring-first
+    -   id: check-ast
+    -   id: debug-statements
+    -   args:
+        - --allow-missing-credentials
+        id: detect-aws-credentials
+    -   id: detect-private-key
+    -   id: name-tests-test
+    -   args:
+        - --branch
+        - dev
+        - --branch
+        - uat
+        - --branch
+        - main
+        - --branch
+        - master
+        - --branch
+        - prod
+        id: no-commit-to-branch
+    repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+-   hooks:
+    -   args:
+        -   secret
+        -   scan
+        -   repo
+        -   .
+        id: ggshield
+        language_version: python3
+        stages: [commit]
+    repo: https://github.com/gitguardian/ggshield
+    rev: v1.32.0

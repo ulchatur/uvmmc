@@ -1,0 +1,19 @@
+pandas==2.2.2 ; python_version >= "3.10" and python_version < "3.13"
+# dagster-graphql==1.7.1 ; python_version >= "3.10" and python_version < "3.13"
+# dagster-pipes==1.7.1 ; python_version >= "3.10" and python_version < "3.13"
+dagster-webserver==1.11.3 ; python_version >= "3.10" and python_version < "3.13"
+dagster==1.11.3 ; python_version >= "3.10" and python_version < "3.13"
+azure.storage.blob == 12.19.0; python_version >= "3.10" and python_version < "3.13"
+openpyxl== 3.1.2; python_version >= "3.10" and python_version < "3.13"
+DateTime==5.5; python_version >= "3.10" and python_version < "3.13"
+# dagster-postgres; python_version >= "3.10" and python_version < "3.13"
+# paramiko==3.4.1; python_version >= "3.10" and python_version < "3.13"
+# oracledb==2.5.0; python_version >= "3.10" and python_version < "3.13"
+azure.identity==1.19.0; python_version >= "3.10" and python_version < "3.13"
+joblib==1.4.2; python_version >= "3.10" and python_version < "3.13"
+pyarrow
+fastparquet
+redis
+sqlalchemy
+cffi
+dagster-postgres
